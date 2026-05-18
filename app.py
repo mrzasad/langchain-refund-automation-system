@@ -3,6 +3,8 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Dict
 import sys
+import json
+import re
 
 # LangChain imports
 from langchain_core.output_parsers import PydanticOutputParser
@@ -13,7 +15,12 @@ from langchain_core.runnables import RunnableSequence
 # Local imports
 from models import DateExtraction, RefundDecision, ComplaintTicket
 from utils import calculate_days_lapsed, determine_refund_decision, validate_dates
-from config import EXTRACTION_PROMPT, EMAIL_GENERATION_PROMPT, REFUND_POLICY_DAYS, OPENAI_API_KEY, LLM_MODEL
+
+try:
+    from config import EXTRACTION_PROMPT, EMAIL_GENERATION_PROMPT, REFUND_POLICY_DAYS, API_KEY, LLM_MODEL, LLM_PROVIDER
+except ValueError as e:
+    st.error(f"❌ Configuration Error: {str(e)}")
+    st.stop()
 
 # Page Configuration
 st.set_page_config(
@@ -58,21 +65,37 @@ with tab1:
     upload_col, template_col = st.columns(2)
     
     with upload_col:
-        st.subheader("Upload Excel File")
+        st.subheader("Upload Data File")
         uploaded_file = st.file_uploader(
-            "Upload customer complaints (Excel format)",
-            type=["xlsx", "xls"],
+            "Upload customer complaints (CSV or Excel format)",
+            type=["xlsx", "xls", "csv"],
             help="Columns should include: customer_name, order_id, complaint_text, complaint_date"
         )
         
         if uploaded_file:
             try:
-                df = pd.read_excel(uploaded_file)
-                st.session_state.input_df = df
+                # Detect file format and read accordingly
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
                 
-                st.success(f"✅ Loaded {len(df)} complaint tickets")
-                st.subheader("Data Preview")
-                st.dataframe(df, use_container_width=True, height=400)
+                # Normalize column names to lowercase
+                df.columns = df.columns.str.lower().str.strip()
+                
+                # Check for required columns
+                required_cols = ['customer_name', 'order_id', 'complaint_text', 'complaint_date']
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                
+                if missing_cols:
+                    st.error(f"❌ Missing required columns: {missing_cols}")
+                    st.info(f"Expected columns: {required_cols}")
+                    st.info(f"Found columns: {list(df.columns)}")
+                else:
+                    st.session_state.input_df = df
+                    st.success(f"✅ Loaded {len(df)} complaint tickets")
+                    st.subheader("Data Preview")
+                    st.dataframe(df, use_container_width=True, height=400)
                 
                 # Display data info
                 col1, col2, col3 = st.columns(3)
@@ -129,11 +152,21 @@ with tab2:
             
             # Initialize LLM
             try:
-                llm = ChatOpenAI(
-                    model=LLM_MODEL,
-                    api_key=OPENAI_API_KEY,
-                    temperature=0
-                )
+                if LLM_PROVIDER == "groq":
+                    # Use Groq API
+                    from langchain_groq import ChatGroq
+                    llm = ChatGroq(
+                        model=LLM_MODEL,
+                        api_key=API_KEY,
+                        temperature=0
+                    )
+                else:
+                    # Use OpenAI
+                    llm = ChatOpenAI(
+                        model=LLM_MODEL,
+                        api_key=API_KEY,
+                        temperature=0
+                    )
                 
                 # Initialize Pydantic Parser
                 parser = PydanticOutputParser(pydantic_object=DateExtraction)
@@ -146,7 +179,7 @@ with tab2:
                 )
                 
                 # Build LCEL Chain (RunnableSequence)
-                chain = prompt | llm | parser
+                chain = prompt | llm
                 
                 results = []
                 df = st.session_state.input_df
@@ -159,16 +192,54 @@ with tab2:
                     
                     try:
                         # Extract dates using LLM
-                        extraction_result = chain.invoke({
+                        llm_response = chain.invoke({
                             "complaint_text": row['complaint_text']
                         })
                         
-                        delivery_date = extraction_result.delivery_date
-                        claim_date = extraction_result.claim_date
+                        # --- KEY CHANGE: Better JSON extraction ---
+                        # Try to extract JSON from the response if there's extra text
+                        response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+                        
+                        # Look for JSON pattern in the response
+                        json_match = re.search(r'(\{[\s\S]*?\})', response_text)
+                        if json_match:
+                            json_str = json_match.group(1)
+                            try:
+                                # Parse the extracted JSON
+                                extraction_data = json.loads(json_str)
+                                
+                                # Validate we have the required fields
+                                if 'delivery_date' not in extraction_data or 'claim_date' not in extraction_data:
+                                    raise ValueError("JSON doesn't contain required fields")
+                                
+                                delivery_date = extraction_data['delivery_date']
+                                claim_date = extraction_data['claim_date']
+                            except (json.JSONDecodeError, ValueError) as e:
+                                raise ValueError(f"Failed to parse extracted JSON: {str(e)}")
+                        else:
+                            raise ValueError("No JSON found in LLM response")
                         
                         # Validate dates
                         if not validate_dates(delivery_date, claim_date):
-                            raise ValueError("Invalid date format extracted")
+                            # Try to fix common date format issues
+                            if delivery_date and "INVALID" not in delivery_date:
+                                try:
+                                    # Attempt to parse and reformat the date
+                                    dt = datetime.strptime(delivery_date, "%d %B %Y")
+                                    delivery_date = dt.strftime("%Y-%m-%d")
+                                except:
+                                    pass
+                                    
+                            if claim_date and "INVALID" not in claim_date:
+                                try:
+                                    dt = datetime.strptime(claim_date, "%d %B %Y")
+                                    claim_date = dt.strftime("%Y-%m-%d")
+                                except:
+                                    pass
+                            
+                            # Check again after attempted fix
+                            if not validate_dates(delivery_date, claim_date):
+                                raise ValueError(f"Invalid date format extracted - delivery: {delivery_date}, claim: {claim_date}")
                         
                         # Calculate days lapsed
                         days_lapsed = calculate_days_lapsed(delivery_date, claim_date)
@@ -211,7 +282,7 @@ with tab2:
                 
             except Exception as e:
                 st.error(f"❌ Error initializing LLM: {str(e)}")
-                st.info("Make sure OPENAI_API_KEY is set in your environment")
+                st.info(f"Make sure {LLM_PROVIDER.upper()}_API_KEY is set in your environment")
         
         # Display Results
         if st.session_state.results_df is not None:
@@ -274,11 +345,19 @@ with tab3:
             
             try:
                 # Initialize LLM for email generation
-                llm = ChatOpenAI(
-                    model=LLM_MODEL,
-                    api_key=OPENAI_API_KEY,
-                    temperature=0.7  # Slightly higher for more creative responses
-                )
+                if LLM_PROVIDER == "groq":
+                    from langchain_groq import ChatGroq
+                    llm = ChatGroq(
+                        model=LLM_MODEL,
+                        api_key=API_KEY,
+                        temperature=0.7
+                    )
+                else:
+                    llm = ChatOpenAI(
+                        model=LLM_MODEL,
+                        api_key=API_KEY,
+                        temperature=0.7
+                    )
                 
                 emails = {}
                 df_results = st.session_state.results_df

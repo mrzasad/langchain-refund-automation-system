@@ -1,0 +1,7 @@
+customer_name,order_id,complaint_text,complaint_date
+Customer-PK,PK-88421,"Order #PK-88421 delivered on 5 April 2026. Customer reports product damaged and requests refund on 12 April 2026.",2026-04-12
+Customer-PK,PK-77109,"Order #PK-77109 delivered on 20 March 2026. Customer reports issue on 10 April 2026 claiming product stopped working and requesting full refund.",2026-04-10
+Customer-PK,PK-99210,"Order #PK-99210 delivered on 28 March 2026. Customer reports defect on 13 April 2026 and requests refund under policy terms.",2026-04-13
+Customer-PK,PK-11023,"Order #PK-11023 delivered on 2 April 2026. Customer reports screen flickering issue on 14 April 2026 and is requesting refund due to defective display.",2026-04-14
+Customer-PK,PK-55290,"Order #PK-55290 delivered on 25 March 2026. Customer reports missing accessory and requests refund or replacement on 13 April 2026.",2026-04-13
+Customer-PK,PK-77841,"Order #PK-77841 delivered on 30 March 2026. Customer reports late delivery and wrong item received, requesting immediate refund on 14 April 2026.",2026-04-14
