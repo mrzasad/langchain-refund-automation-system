@@ -23,6 +23,9 @@ An AI-powered Streamlit application that automates refund decisions for customer
 ```bash
 pip install -r requirements.txt
 
+# screen shots
+
+
 
 <img width="1481" height="617" alt="Screenshot 2026-05-17 232128" src="https://github.com/user-attachments/assets/35ccfba4-594d-4b34-b8d3-f2a16d2eb9e2" />
 <img width="1448" height="618" alt="Screenshot 2026-05-17 232053" src="https://github.com/user-attachments/assets/1dafa67f-e810-4f32-ae87-0c2c4b10df2b" />
